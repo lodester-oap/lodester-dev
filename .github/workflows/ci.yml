@@ -36,12 +36,34 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: lodester_test
+          POSTGRES_USER: lodester
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://lodester:test_password@localhost:5432/lodester_test?sslmode=disable
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@latest
+          goose -dir migrations postgres "$DATABASE_URL" up
       - name: Run tests
+        env:
+          DATABASE_URL: postgresql://lodester:test_password@localhost:5432/lodester_test?sslmode=disable
         run: go test -race -coverprofile=coverage.txt ./...
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -61,3 +83,7 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+      - name: Run gosec
+        uses: securego/gosec@master
+        with:
+          args: -severity medium -confidence medium ./...

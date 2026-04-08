@@ -9,13 +9,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/lodester-oap/lodester/internal/handler"
+	"github.com/lodester-oap/lodester/internal/store"
 )
 
 // Version is set at build time via -ldflags.
 var Version = "0.0.1"
 
 // New creates a configured HTTP server.
-func New(addr string, logger *slog.Logger) *http.Server {
+// If queries is nil, only the health endpoint is registered (useful for tests).
+func New(addr string, logger *slog.Logger, queries *store.Queries) *http.Server {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -24,6 +27,17 @@ func New(addr string, logger *slog.Logger) *http.Server {
 
 	// OAP discovery endpoints
 	r.Get("/.well-known/oap/health", handleHealth)
+
+	// API v1 — requires DB
+	if queries != nil {
+		accountHandler := handler.NewAccountHandler(queries, logger)
+		sessionHandler := handler.NewSessionHandler(queries, logger)
+
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Post("/accounts", accountHandler.Create)
+			r.Post("/sessions", sessionHandler.Create)
+		})
+	}
 
 	return &http.Server{
 		Addr:    addr,

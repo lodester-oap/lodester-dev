@@ -12,7 +12,7 @@ import (
 
 func TestHealthEndpoint(t *testing.T) {
 	logger := slog.Default()
-	srv := New(":0", logger)
+	srv := New(":0", logger, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/oap/health", nil)
 	rec := httptest.NewRecorder()
