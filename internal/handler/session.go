@@ -35,6 +35,7 @@ type createSessionRequest struct {
 
 type createSessionResponse struct {
 	Token     string    `json:"token"`
+	UserID    string    `json:"user_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
@@ -117,6 +118,7 @@ func (h *SessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, createSessionResponse{
 		Token:     token,
+		UserID:    uid,
 		ExpiresAt: expiresAt,
 	})
 }

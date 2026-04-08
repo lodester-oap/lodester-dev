@@ -30,3 +30,12 @@ type User struct {
 	// Server-side Argon2id salt for login_hash
 	LoginSalt []byte `json:"login_salt"`
 }
+
+type Vault struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Data      []byte             `json:"data"`
+	Version   int32              `json:"version"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}

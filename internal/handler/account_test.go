@@ -111,6 +111,22 @@ func TestCreateAccount_MissingFields(t *testing.T) {
 	}
 }
 
+func TestCreateAccount_InvalidEmail(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	h := handler.NewAccountHandler(queries, slog.Default())
+
+	body := `{"email":"natsign","login_hash":"` + validLoginHash + `","kdf_params":{"algorithm":"argon2id"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateAccount_InvalidLoginHash(t *testing.T) {
 	queries := testutil.SetupTestQueries(t)
 	h := handler.NewAccountHandler(queries, slog.Default())

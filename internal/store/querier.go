@@ -17,6 +17,10 @@ type Querier interface {
 	GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (Session, error)
 	GetUserByEmailHash(ctx context.Context, emailHash []byte) (User, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
+	GetVaultByUserID(ctx context.Context, userID pgtype.UUID) (Vault, error)
+	// Creates or updates the vault. On update, requires version match (optimistic locking, DECISION-051).
+	// The version is incremented automatically.
+	UpsertVault(ctx context.Context, arg UpsertVaultParams) (Vault, error)
 }
 
 var _ Querier = (*Queries)(nil)

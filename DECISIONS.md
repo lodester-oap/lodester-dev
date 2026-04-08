@@ -518,6 +518,39 @@
   - 本番（Linode）: systemd 直接運用（Docker 不要）
 - **根拠**: Lodester は自己ホスト前提、複数の運用方法を最初から想定
 
+### [DECISION-049] 暗号文ヘッダスキーマ (Ciphertext Header)
+
+- **日付**: 2026-04-08
+- **コンテキスト**: クリプトアジリティ確保のため、暗号文に自己記述型ヘッダを付ける
+- **決定**: ワイヤーフォーマット `[4-byte header_len BE][header JSON][ciphertext]`
+- **ヘッダフィールド**:
+  - `v`: スキーマバージョン (現在 1)
+  - `alg`: 暗号アルゴリズム (`aes-gcm-256`)
+  - `kdf`: KDF 名 (`argon2id`)
+  - `kdf_params`: KDF パラメータ (memory, iterations, parallelism)
+  - `nonce`: AES-GCM nonce (12 bytes, base64url)
+  - `ct_len`: 暗号文長 (bytes)
+- **根拠**: 将来のアルゴリズム変更時に旧データも復号可能にする
+
+### [DECISION-050] Address モデルの手動入力方針
+
+- **日付**: 2026-04-08
+- **コンテキスト**: 日本語住所のローマ字表記をどう扱うか
+- **決定**: JP ローマ字表記は手動入力 (M4 で実装)
+- **根拠**: 自動変換は精度が不十分、ユーザーの意図を尊重
+
+### [DECISION-051] 楽観的ロック (Optimistic Locking)
+
+- **日付**: 2026-04-08
+- **コンテキスト**: 複数デバイスからの同時ボールト更新時のデータ競合防止
+- **決定**: vaults テーブルに `version INTEGER` カラム、更新時にバージョン一致を要求
+- **方針**:
+  - 初回作成: version = 1
+  - 更新: `WHERE version = $expected` + version 自動インクリメント
+  - バージョン不一致: 409 Conflict + `VERSION_CONFLICT` エラーコード
+  - クライアントは再取得 → 再暗号化 → 再送信
+- **根拠**: 悲観的ロックはコネクション保持が必要で個人運用には重すぎる
+
 ---
 
 ## 実装フェーズで決定する項目

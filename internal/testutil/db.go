@@ -13,6 +13,9 @@ import (
 
 // SetupTestDB returns a pgxpool.Pool connected to the test database.
 // It skips the test if TEST_DATABASE_URL is not set.
+//
+// IMPORTANT: Multiple test packages share the same database.
+// Run with `go test -p 1 ./...` to avoid cross-package interference.
 func SetupTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL := os.Getenv("TEST_DATABASE_URL")
@@ -36,9 +39,13 @@ func SetupTestQueries(t *testing.T) *store.Queries {
 	t.Helper()
 	pool := SetupTestDB(t)
 
-	// Clean tables for test isolation
+	// Clean tables for test isolation (order matters: FK constraints)
 	ctx := context.Background()
-	_, err := pool.Exec(ctx, "DELETE FROM sessions")
+	_, err := pool.Exec(ctx, "DELETE FROM vaults")
+	if err != nil {
+		t.Fatalf("failed to clean vaults: %v", err)
+	}
+	_, err = pool.Exec(ctx, "DELETE FROM sessions")
 	if err != nil {
 		t.Fatalf("failed to clean sessions: %v", err)
 	}
