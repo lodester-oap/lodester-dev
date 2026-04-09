@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package vcard implements a minimal RFC 6350 (vCard 4.0) exporter
+// Package vcard implements a minimal RFC 2426 (vCard 3.0) exporter
 // tailored to Lodester's Person / Address data model.
 //
 // Design notes:
+//   - We emit vCard *3.0*, not 4.0, because Apple Contacts on iOS /
+//     macOS reads 4.0 files with legacy encoding assumptions and
+//     mojibakes CJK text. Empirically, 3.0 is what Apple's parser
+//     treats as first class, and it is also what Google Contacts
+//     exports by default. See docs/vcard-compatibility.md.
 //   - Lodester runs client-side (the server never sees decrypted
 //     personal data), so this package is intentionally pure and free of
 //     HTTP dependencies. Callers construct a Card from in-memory values
@@ -11,13 +16,14 @@
 //   - The X-GDA-CODE custom field is added so that vCard consumers who
 //     understand Lodester can round-trip the address identifier. Other
 //     consumers will treat it as an opaque extension and preserve it.
-//   - Multi-script names use the ALTID mechanism from RFC 6350 section 6.7.1
-//     so a Japanese and a romanized variant of the same field reference
-//     each other without claiming to be distinct people.
+//   - Multi-script name / address variants: vCard 3.0 has no ALTID,
+//     and Apple Contacts does not display ALTID siblings even under
+//     vCard 4.0. We therefore emit only the primary (first) variant
+//     and document the trade-off. Phase 1b may revisit this with
+//     X-PHONETIC-* extensions or a per-user "preferred script" switch.
 package vcard
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -58,31 +64,26 @@ type Card struct {
 	GDACode   string // already formatted as XXXX-XXXX-XXXX
 }
 
-// Export serializes the card as a vCard 4.0 document using CRLF line
-// endings as required by RFC 6350.
+// Export serializes the card as a vCard 3.0 document using CRLF line
+// endings as required by RFC 2426.
+//
+// We deliberately avoid a UTF-8 BOM. Apple Contacts fails to parse
+// vCard files that begin with U+FEFF (empirically confirmed on iOS);
+// without a BOM and with VERSION:3.0 it reads UTF-8 text correctly.
 func Export(card Card) string {
 	var b strings.Builder
 	writeLine(&b, "BEGIN:VCARD")
-	writeLine(&b, "VERSION:4.0")
+	writeLine(&b, "VERSION:3.0")
 
-	// FN is mandatory per RFC 6350 § 6.2.1. Use the first name variant.
+	// FN is mandatory per RFC 2426 § 3.1.1. We pick the best readable
+	// full name (preferring a Latin variant if one was supplied, for
+	// broad business-card compatibility).
 	fn := formatFN(card)
 	writeLine(&b, "FN:"+escape(fn))
 
-	for i, n := range card.Names {
-		nValue := joinN(n)
-		// The first variant is always emitted as bare N (no ALTID or
-		// LANGUAGE parameters). Additional variants use ALTID so
-		// downstream consumers know they describe the same identity.
-		if i == 0 {
-			writeLine(&b, "N:"+nValue)
-			continue
-		}
-		params := fmt.Sprintf(";ALTID=%d", i+1)
-		if n.LanguageTag != "" {
-			params += ";LANGUAGE=" + n.LanguageTag
-		}
-		writeLine(&b, "N"+params+":"+nValue)
+	// vCard 3.0 has no ALTID — only the primary (first) N is emitted.
+	if len(card.Names) > 0 {
+		writeLine(&b, "N:"+joinN(card.Names[0]))
 	}
 
 	for _, o := range card.Orgs {
@@ -103,16 +104,11 @@ func Export(card Card) string {
 		}
 		writeLine(&b, "EMAIL:"+escape(e))
 	}
-	for i, a := range card.Addresses {
-		adr := joinADR(a)
-		params := ""
-		if len(card.Addresses) > 1 {
-			params = fmt.Sprintf(";ALTID=%d", i+1)
-		}
-		if a.LanguageTag != "" {
-			params += ";LANGUAGE=" + a.LanguageTag
-		}
-		writeLine(&b, "ADR"+params+":"+adr)
+	// vCard 3.0 has no ALTID — only the primary (first) ADR is emitted.
+	// iOS also renders a LANGUAGE parameter as the field label, so we
+	// emit a bare ADR regardless of the stored LanguageTag.
+	if len(card.Addresses) > 0 {
+		writeLine(&b, "ADR:"+joinADR(card.Addresses[0]))
 	}
 	if card.Note != "" {
 		writeLine(&b, "NOTE:"+escape(card.Note))

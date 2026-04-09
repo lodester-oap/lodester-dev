@@ -27,12 +27,27 @@ func TestExport_MinimalEnglishCard(t *testing.T) {
 	out := Export(card)
 
 	mustContain(t, out, "BEGIN:VCARD\r\n")
-	mustContain(t, out, "VERSION:4.0\r\n")
+	mustContain(t, out, "VERSION:3.0\r\n")
 	mustContain(t, out, "FN:Alice Smith\r\n")
 	mustContain(t, out, "N:Smith;Alice;;;\r\n")
-	mustContain(t, out, "ADR;LANGUAGE=en-Latn:;;123 Main St;Springfield;IL;62704;US\r\n")
+	mustContain(t, out, "ADR:;;123 Main St;Springfield;IL;62704;US\r\n")
 	mustContain(t, out, "X-GDA-CODE:ABCD-EFGH-JKMN\r\n")
 	mustContain(t, out, "END:VCARD\r\n")
+}
+
+func TestExport_NoUTF8BOM(t *testing.T) {
+	card := Card{
+		Names: []Name{{Family: "山口", Given: "大翔", LanguageTag: "ja-Jpan"}},
+	}
+	out := Export(card)
+	// Apple Contacts fails to parse vCard files that begin with U+FEFF
+	// (empirical). The output must start with BEGIN:VCARD, not a BOM.
+	if strings.HasPrefix(out, "\ufeff") {
+		t.Fatal("output must not be prefixed with a UTF-8 BOM")
+	}
+	if !strings.HasPrefix(out, "BEGIN:VCARD\r\n") {
+		t.Fatalf("output must start with BEGIN:VCARD, got %q...", out[:16])
+	}
 }
 
 func TestExport_JapaneseFirstName(t *testing.T) {
@@ -54,7 +69,7 @@ func TestExport_JapaneseFirstName(t *testing.T) {
 	}
 }
 
-func TestExport_MultiScriptUsesALTID(t *testing.T) {
+func TestExport_MultiScriptDropsSecondary(t *testing.T) {
 	card := Card{
 		Names: []Name{
 			{Family: "山口", Given: "大翔", LanguageTag: "ja-Jpan"},
@@ -63,12 +78,18 @@ func TestExport_MultiScriptUsesALTID(t *testing.T) {
 	}
 	out := Export(card)
 
-	// First N has no ALTID (native script is primary).
+	// Only the primary N is emitted (vCard 3.0 has no ALTID).
 	mustContain(t, out, "N:山口;大翔;;;\r\n")
-	// Second variant gets ALTID=2 and LANGUAGE tag.
-	mustContain(t, out, "N;ALTID=2;LANGUAGE=ja-Latn:Yamaguchi;Taketo;;;\r\n")
-	// FN should prefer the Latin variant for compatibility.
+	// FN still prefers the Latin variant for business-card compatibility.
 	mustContain(t, out, "FN:Taketo Yamaguchi\r\n")
+	// ALTID must never appear.
+	if strings.Contains(out, "ALTID") {
+		t.Fatalf("vCard 3.0 output must not contain ALTID, got:\n%s", out)
+	}
+	// The structured secondary N must not leak into the output.
+	if strings.Contains(out, "N;") || strings.Contains(out, "Yamaguchi;Taketo") {
+		t.Fatalf("secondary N variant leaked into output:\n%s", out)
+	}
 }
 
 func TestExport_EscapesSpecialCharacters(t *testing.T) {
