@@ -11,13 +11,30 @@ import (
 )
 
 type Querier interface {
+	// Persists a freshly generated GDA code bound to (person_id, user_id).
+	// The canonical 12-character (no hyphens, uppercase) form is stored.
+	CreateGDACode(ctx context.Context, arg CreateGDACodeParams) (GdaCode, error)
+	// Creates a minimal person row owned by the given user.
+	// All sensitive fields (name, addresses, phone, notes) live in the Vault (DECISION-052).
+	CreatePerson(ctx context.Context, userID pgtype.UUID) (Person, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteGDACode(ctx context.Context, arg DeleteGDACodeParams) error
+	// Deletes a person owned by the given user. Returns no rows; callers must check
+	// the affected row count to detect missing or foreign persons.
+	DeletePerson(ctx context.Context, arg DeletePersonParams) error
+	GetGDACodeByCode(ctx context.Context, code string) (GdaCode, error)
+	GetPersonByID(ctx context.Context, id pgtype.UUID) (Person, error)
 	GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (Session, error)
 	GetUserByEmailHash(ctx context.Context, emailHash []byte) (User, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetVaultByUserID(ctx context.Context, userID pgtype.UUID) (Vault, error)
+	ListGDACodesByPersonID(ctx context.Context, arg ListGDACodesByPersonIDParams) ([]GdaCode, error)
+	ListGDACodesByUserID(ctx context.Context, userID pgtype.UUID) ([]GdaCode, error)
+	ListPersonsByUserID(ctx context.Context, userID pgtype.UUID) ([]Person, error)
+	// Bumps updated_at (e.g. after vault rewrite affecting this person).
+	TouchPerson(ctx context.Context, arg TouchPersonParams) (Person, error)
 	// Creates or updates the vault. On update, requires version match (optimistic locking, DECISION-051).
 	// The version is incremented automatically.
 	UpsertVault(ctx context.Context, arg UpsertVaultParams) (Vault, error)

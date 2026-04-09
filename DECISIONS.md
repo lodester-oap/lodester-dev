@@ -551,6 +551,66 @@
   - クライアントは再取得 → 再暗号化 → 再送信
 - **根拠**: 悲観的ロックはコネクション保持が必要で個人運用には重すぎる
 
+### [DECISION-052] Person / Address データの保管方針
+
+- **日付**: 2026-04-09
+- **コンテキスト**: M4 で Person(人物)と Address(住所)の永続化方式を決める必要がある。サーバー側 DB に平文で保管するか、Vault の暗号文に含めるか
+- **選択肢**:
+  - A: すべて Vault に入れる(サーバー DB は最小メタデータのみ)
+  - B: 一部(氏名・住所行)を Vault、一部(国コード等)をサーバー DB に
+  - C: すべてサーバー DB に暗号カラムとして保管
+- **決定**: A(すべて Vault に入れる)
+- **方針**:
+  - `persons` テーブルは `id`, `user_id`, `created_at`, `updated_at` のみの最小構成(Marcus 設計)
+  - 氏名(latin/native/phonetic)、住所 8 レター、電話番号、メモ等はすべて Vault JSON の中
+  - サーバーは Person の存在と所有者しか知らない(ゼロ知識)
+  - GDA コードのみ別途 `gda_codes` テーブルに登録(公開識別子として扱うため)
+- **根拠**:
+  - Lodester の哲学(ゼロ知識)を貫く。サーバー運営者が令状対応でも氏名・住所を渡せない状態にする
+  - M3 レビューで白石が明確に要求「Person/Address は完全に Vault、サーバー側テーブルに機密情報を絶対入れない」
+  - Marcus の参照整合性要件(ID 参照のみサーバー側で管理)を満たす
+
+### [DECISION-053] GDA コード仕様
+
+- **日付**: 2026-04-09
+- **コンテキスト**: Global Distinct Address(世界的に一意な住所識別子)の符号化方式
+- **決定**:
+  - 符号化: Crockford Base32(I/L/O/U を除いた 32 文字集合)
+  - 長さ: 11 文字 + Luhn mod 32 チェックサム 1 文字 = 合計 12 文字
+  - 表示形式: `XXXX-XXXX-XXXX`(4-4-4 ハイフン区切り)
+  - 生成源: `crypto/rand`(55 bit エントロピー、乱数衝突確率は無視可能)
+- **理由**:
+  - Crockford Base32 は人間が誤読しにくい(0/O, 1/I/L の混同回避)
+  - Luhn mod 32 は 1 文字誤入力を 100% 検出、隣接 2 文字入れ替えを 96.875% 検出
+  - 4-4-4 形式は電話番号・クレジットカードと同じ認知チャンクで音読可能
+  - 55 bit は SHA-1 の衝突空間より遥かに小さいが、運用上 10^8 個までの発行を想定するため十分
+- **制約**: GDA コードは「公開 ID」。個人情報を含まないので Vault 外に保管可能
+
+### [DECISION-054] Address データモデル(libaddressinput + 多スクリプト)
+
+- **日付**: 2026-04-09
+- **コンテキスト**: 240 カ国対応を目指さない現実路線の住所スキーマ策定
+- **決定**:
+  - フィールド: libaddressinput 8 レター(N/O/A/C/D/S/Z/X)を踏襲
+    - N = Name(受取人名)
+    - O = Organization(会社名、optional)
+    - A = Address lines(番地・建物名、配列)
+    - C = City/Locality(市区町村)
+    - D = Dependent locality(町名・大字、optional)
+    - S = State/Region/Prefecture(都道府県)
+    - Z = Zip/Postal code
+    - X = Sorting code(optional、仏国 CEDEX 等)
+  - 多スクリプト対応: 各 Address に `script` フィールド(`ja-Jpan`, `ja-Latn` 等の BCP 47)
+  - 1 つの Person が複数 Address を持てる(日本語版 + ローマ字版など)
+  - 国コード: ISO 3166-1 alpha-2(`JP`, `US`, `DE`)
+- **対応国の優先順位**:
+  - Phase 1 MVP: 日本 + 主要 5 カ国(US, DE, FR, UK, AU)のバリデーションを重点実装
+  - 残り 234 カ国: 入力は受け付けるがバリデーションは最小限(郵便番号形式チェックのみ等)
+- **根拠**:
+  - libaddressinput は Google が Apache 2.0 で公開、世界で最も広く採用されている住所スキーマ
+  - 240 カ国完璧対応は M4 では非現実的(Tamura の指摘:「完璧より完成」)
+  - 多スクリプト対応は Priya の必須要件(日本語圏ユーザーの本国/海外配送需要)
+
 ---
 
 ## 実装フェーズで決定する項目

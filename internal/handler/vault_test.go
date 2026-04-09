@@ -4,6 +4,7 @@ package handler_test
 
 import (
 	"bytes"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -31,10 +32,12 @@ func loginAndGetToken(t *testing.T, queries *store.Queries, email string) string
 	}
 	createTestUser(t, queries, email, loginHash)
 
-	// Create a session directly in the DB (bypass handler for simplicity)
+	// Create a session directly in the DB. Use crypto/rand so that multiple
+	// calls within the same test produce distinct tokens (and therefore
+	// distinct token_hash values, satisfying the unique constraint).
 	tokenBytes := make([]byte, 32)
-	for i := range tokenBytes {
-		tokenBytes[i] = byte(i + 100)
+	if _, err := cryptorand.Read(tokenBytes); err != nil {
+		t.Fatalf("failed to read random token bytes: %v", err)
 	}
 	tokenHash := sha256.Sum256(tokenBytes)
 	token := base64.URLEncoding.EncodeToString(tokenBytes)

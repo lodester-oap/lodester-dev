@@ -141,6 +141,46 @@ curl -X POST http://localhost:8080/api/v1/sessions \
   -d '{"email":"test@example.com","login_hash":"dummy_hash"}'
 ```
 
+## ロードマップ
+
+### 完了済み
+
+- **M0**: Go プロジェクト構造、ヘルスエンドポイント、CI 雛形
+- **M1**: 認証基盤(Bitwarden 方式)、PostgreSQL + sqlc + goose
+- **M2**: 暗号本実装(Argon2id、タイミング攻撃対策)
+- **M3**: Vault API、認証ミドルウェア、HTML フロントエンド、AES-GCM 暗号化
+
+### M4(進行中): 住所管理機能
+
+- Person データモデル(多スクリプト名前対応)
+- Address データモデル(libaddressinput 8 レター)
+- GDA(Global Distinct Address)コード生成 + Luhn mod 32 チェックサム
+- vCard 4.0 エクスポート(`X-GDA-CODE` カスタムフィールド)
+
+### M4 でやらないこと(M5 以降に回す)
+
+- QR コード共有 → M5
+- 共有 URL とケイパビリティ URL → M5
+- インスタンス発見(`/.well-known/oap`) → M5
+- Postkey 本番デプロイ → M5
+- セキュリティ監査、ローンチ → M5
+
+### Phase 1b 以降
+
+- TOTP MFA、WebAuthn
+- パスワード変更、アカウント削除、メール送信
+- 英語 UI、追加言語
+
+## テスト実行について
+
+複数テストパッケージが同一の DB を共有するため、テストは **直列** で実行します:
+
+```bash
+go test -p 1 ./...
+```
+
+並列化(パッケージごとの DB 分離)は M5 で対応予定。
+
 ## ライセンス
 
 Lodester (リファレンス実装) は AGPL v3 で公開予定。OAP プロトコル仕様書は CC BY 4.0 で公開予定。

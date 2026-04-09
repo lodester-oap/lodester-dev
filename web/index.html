@@ -192,12 +192,78 @@
         <button class="btn-danger" onclick="handleLogout()">ログアウト</button>
       </div>
 
-      <!-- Vault section -->
+      <!-- People section (M4) -->
+      <div id="people-section" class="card">
+        <h2>人物 (Person)</h2>
+        <div id="people-list" style="margin-bottom:1rem;"></div>
+        <details>
+          <summary style="cursor:pointer;font-weight:600;margin-bottom:0.5rem;">新規追加</summary>
+          <form onsubmit="handleCreatePerson(event)" style="margin-top:0.75rem;">
+            <fieldset style="border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:0.75rem;">
+              <legend style="font-size:0.85rem;font-weight:600;padding:0 0.25rem;">氏名 (現地表記)</legend>
+              <div class="field">
+                <label for="p-native-family">姓</label>
+                <input type="text" id="p-native-family" placeholder="山口">
+              </div>
+              <div class="field">
+                <label for="p-native-given">名</label>
+                <input type="text" id="p-native-given" placeholder="大翔">
+              </div>
+              <div class="field">
+                <label for="p-native-lang">言語タグ (BCP 47)</label>
+                <input type="text" id="p-native-lang" value="ja-Jpan">
+              </div>
+            </fieldset>
+            <fieldset style="border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:0.75rem;">
+              <legend style="font-size:0.85rem;font-weight:600;padding:0 0.25rem;">氏名 (ラテン表記、任意)</legend>
+              <div class="field">
+                <label for="p-latin-family">Family</label>
+                <input type="text" id="p-latin-family" placeholder="Yamaguchi">
+              </div>
+              <div class="field">
+                <label for="p-latin-given">Given</label>
+                <input type="text" id="p-latin-given" placeholder="Taketo">
+              </div>
+            </fieldset>
+            <fieldset style="border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:0.75rem;">
+              <legend style="font-size:0.85rem;font-weight:600;padding:0 0.25rem;">住所</legend>
+              <div class="field">
+                <label for="p-country">国 (ISO 3166-1 alpha-2)</label>
+                <input type="text" id="p-country" value="JP" maxlength="2" style="text-transform:uppercase;">
+              </div>
+              <div class="field">
+                <label for="p-postal">郵便番号</label>
+                <input type="text" id="p-postal" placeholder="100-8914">
+              </div>
+              <div class="field">
+                <label for="p-region">都道府県・州</label>
+                <input type="text" id="p-region" placeholder="東京都">
+              </div>
+              <div class="field">
+                <label for="p-locality">市区町村</label>
+                <input type="text" id="p-locality" placeholder="千代田区">
+              </div>
+              <div class="field">
+                <label for="p-street">番地・建物</label>
+                <input type="text" id="p-street" placeholder="永田町 1-7-1">
+              </div>
+            </fieldset>
+            <div class="field">
+              <label for="p-phone">電話番号 (任意)</label>
+              <input type="tel" id="p-phone" placeholder="+81-90-...">
+            </div>
+            <button type="submit" id="person-create-btn">追加</button>
+          </form>
+        </details>
+        <div id="people-msg" class="msg"></div>
+      </div>
+
+      <!-- Raw vault section (developer view) -->
       <div id="vault-section" class="card">
-        <h2>ボールト</h2>
+        <h2>ボールト (生 JSON)</h2>
         <div class="field">
           <label for="vault-data">データ (JSON)</label>
-          <textarea id="vault-data" rows="8" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:4px;font-family:monospace;font-size:0.85rem;resize:vertical;" placeholder='{"addresses": []}'></textarea>
+          <textarea id="vault-data" rows="8" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:4px;font-family:monospace;font-size:0.85rem;resize:vertical;" placeholder='{"persons": {}}'></textarea>
         </div>
         <button id="vault-save-btn" onclick="handleSaveVault()">保存</button>
         <button style="background:var(--muted);margin-top:0.25rem;" onclick="loadVault()">再読込</button>

@@ -26,6 +26,9 @@ All API errors return JSON with the following structure:
 | `VERSION_CONFLICT` | 409 | Vault version mismatch (optimistic locking) — re-fetch and retry |
 | `INVALID_VAULT_DATA` | 400 | Vault blob format is invalid (bad header structure) |
 | `PAYLOAD_TOO_LARGE` | 413 | Vault data exceeds 1 MB size limit |
+| `INVALID_PERSON_ID` | 400 | Person ID is not a valid UUID |
+| `PERSON_NOT_FOUND` | 404 | Person does not exist or is owned by another user (identical response, no enumeration leak) |
+| `INVALID_GDA_CODE` | 400 | GDA code has invalid characters, length, or checksum |
 | `INTERNAL_ERROR` | 500 | Server-side error |
 
 ## Security Notes

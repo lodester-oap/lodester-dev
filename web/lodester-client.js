@@ -34,18 +34,24 @@ let sessionState = {
 // ---------------------------------------------------------------------------
 // Argon2id (WASM)
 // ---------------------------------------------------------------------------
-// We load argon2-browser from CDN for the minimal implementation.
-// Production should bundle this locally.
+// argon2-browser v1.18.0 is loaded from CDN with SRI (Subresource Integrity).
+// The integrity hash prevents a compromised CDN from serving malicious code.
+// Phase 1b will bundle this library locally via go:embed.
+// See docs/client-crypto-implementation.md for details.
 let argon2Ready = false;
 let argon2Module = null;
 
 const ARGON2_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/dist/argon2-bundled.min.js";
+// SHA-384 hash of argon2-bundled.min.js v1.18.0 (verified 2026-04-09)
+const ARGON2_SCRIPT_SRI = "sha384-XOR3aNvHciLPIf6r+2glkrmbBbLmIJ1EChMXjw8eBKBf8gE0rDq1TyUNuRdorOqi";
 
 function loadArgon2() {
   return new Promise((resolve, reject) => {
     if (argon2Ready) { resolve(); return; }
     const script = document.createElement("script");
     script.src = ARGON2_SCRIPT_URL;
+    script.integrity = ARGON2_SCRIPT_SRI;
+    script.crossOrigin = "anonymous";
     script.onload = () => {
       if (typeof argon2 !== "undefined") {
         argon2Module = argon2;
@@ -55,7 +61,7 @@ function loadArgon2() {
         reject(new Error("argon2 module not found after script load"));
       }
     };
-    script.onerror = () => reject(new Error("Failed to load argon2-browser"));
+    script.onerror = () => reject(new Error("Failed to load argon2-browser (SRI mismatch or network error)"));
     document.head.appendChild(script);
   });
 }
@@ -259,6 +265,31 @@ async function apiPut(path, body) {
   return { status: resp.status, data: data };
 }
 
+async function apiDelete(path) {
+  const headers = {};
+  if (sessionState.token) {
+    headers["Authorization"] = "Bearer " + sessionState.token;
+  }
+  const resp = await fetch(API_BASE + path, { method: "DELETE", headers: headers });
+  if (resp.status === 204) return { status: 204, data: null };
+  const data = await resp.json().catch(() => null);
+  return { status: resp.status, data: data };
+}
+
+// apiPostRaw returns the raw Response so callers can stream the body
+// (used for vCard file downloads).
+async function apiPostRaw(path, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (sessionState.token) {
+    headers["Authorization"] = "Bearer " + sessionState.token;
+  }
+  return fetch(API_BASE + path, {
+    method: "POST",
+    headers: headers,
+    body: JSON.stringify(body),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // UI helpers
 // ---------------------------------------------------------------------------
@@ -433,9 +464,283 @@ async function loadVault() {
     const blobBytes = base64ToUint8(resp.data.data);
     const plaintext = await decryptVaultData(blobBytes, sessionState.encryptionKey);
     document.getElementById("vault-data").value = JSON.stringify(plaintext, null, 2);
+    renderPeople(plaintext);
     showMessage(msgEl, "ボールトを読み込みました (v" + resp.data.version + ")", "success");
   } catch (err) {
     showMessage(msgEl, "復号エラー: " + err.message, "error");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// People (M4)
+// ---------------------------------------------------------------------------
+
+// getVaultJSON parses the textarea contents into an object, returning a
+// well-formed default if it is empty. This lets callers mutate and
+// re-save without clobbering other vault entries.
+function getVaultJSON() {
+  const raw = document.getElementById("vault-data").value.trim();
+  if (!raw) return { version: 1, persons: {} };
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed.persons) parsed.persons = {};
+    if (!parsed.version) parsed.version = 1;
+    return parsed;
+  } catch {
+    return { version: 1, persons: {} };
+  }
+}
+
+function setVaultJSON(obj) {
+  document.getElementById("vault-data").value = JSON.stringify(obj, null, 2);
+}
+
+function renderPeople(vault) {
+  const container = document.getElementById("people-list");
+  if (!container) return;
+  const persons = (vault && vault.persons) || {};
+  const ids = Object.keys(persons);
+  if (ids.length === 0) {
+    container.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">まだ人物が登録されていません。</p>';
+    return;
+  }
+  const parts = [];
+  for (const id of ids) {
+    const p = persons[id];
+    const name = personDisplayName(p);
+    const gda = p.gda_code ? '<div style="font-family:monospace;font-size:0.8rem;color:var(--muted);">' + escapeHTML(p.gda_code) + '</div>' : '';
+    parts.push(
+      '<div style="border:1px solid var(--border);border-radius:4px;padding:0.6rem;margin-bottom:0.4rem;">' +
+      '<div style="font-weight:600;">' + escapeHTML(name) + '</div>' +
+      gda +
+      '<div style="margin-top:0.4rem;display:flex;gap:0.3rem;flex-wrap:wrap;">' +
+      '<button style="flex:0 0 auto;width:auto;padding:0.3rem 0.6rem;font-size:0.8rem;" onclick="handleMintGDA(\'' + id + '\')">GDAコード発行</button>' +
+      '<button style="flex:0 0 auto;width:auto;padding:0.3rem 0.6rem;font-size:0.8rem;background:var(--success);" onclick="handleDownloadVCard(\'' + id + '\')">vCardダウンロード</button>' +
+      '<button style="flex:0 0 auto;width:auto;padding:0.3rem 0.6rem;font-size:0.8rem;background:var(--danger);" onclick="handleDeletePerson(\'' + id + '\')">削除</button>' +
+      '</div></div>'
+    );
+  }
+  container.innerHTML = parts.join("");
+}
+
+function personDisplayName(p) {
+  if (!p || !p.names || p.names.length === 0) return "(名前なし)";
+  // Prefer a latin variant, else first.
+  for (const n of p.names) {
+    if (n.language_tag && n.language_tag.toLowerCase().includes("latn")) {
+      return (n.given || "") + " " + (n.family || "");
+    }
+  }
+  const n = p.names[0];
+  return (n.family || "") + " " + (n.given || "");
+}
+
+function escapeHTML(s) {
+  return String(s || "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+async function handleCreatePerson(event) {
+  event.preventDefault();
+  const msgEl = "people-msg";
+  clearMessages();
+
+  // Gather form values.
+  const nativeFamily = document.getElementById("p-native-family").value.trim();
+  const nativeGiven = document.getElementById("p-native-given").value.trim();
+  const nativeLang = document.getElementById("p-native-lang").value.trim() || "ja-Jpan";
+  const latinFamily = document.getElementById("p-latin-family").value.trim();
+  const latinGiven = document.getElementById("p-latin-given").value.trim();
+  const country = document.getElementById("p-country").value.trim().toUpperCase();
+  const postal = document.getElementById("p-postal").value.trim();
+  const region = document.getElementById("p-region").value.trim();
+  const locality = document.getElementById("p-locality").value.trim();
+  const street = document.getElementById("p-street").value.trim();
+  const phone = document.getElementById("p-phone").value.trim();
+
+  if (!nativeFamily && !nativeGiven && !latinFamily && !latinGiven) {
+    showMessage(msgEl, "少なくとも氏名をどれか 1 つ入力してください。", "error");
+    return;
+  }
+
+  setLoading("person-create-btn", true);
+  showMessage(msgEl, "サーバーに人物 ID を作成中...", "info");
+
+  try {
+    // 1. Ask the server to mint a person row (ID only, no sensitive fields).
+    const createResp = await apiPost("/persons", {});
+    if (createResp.status !== 201) {
+      showMessage(msgEl, "人物作成に失敗しました。", "error");
+      return;
+    }
+    const personID = createResp.data.id;
+
+    // 2. Build the client-side person record and push into the Vault JSON.
+    const names = [];
+    if (nativeFamily || nativeGiven) {
+      names.push({ family: nativeFamily, given: nativeGiven, language_tag: nativeLang });
+    }
+    if (latinFamily || latinGiven) {
+      names.push({ family: latinFamily, given: latinGiven, language_tag: "en-Latn" });
+    }
+    const addresses = [];
+    if (country || postal || region || locality || street) {
+      addresses.push({
+        script: nativeLang,
+        country: country || "",
+        address_lines: street ? [street] : [],
+        locality: locality,
+        administrative_area: region,
+        postal_code: postal,
+      });
+    }
+    const phones = phone ? [phone] : [];
+
+    const vault = getVaultJSON();
+    vault.persons[personID] = {
+      names: names,
+      addresses: addresses,
+      phones: phones,
+      emails: [],
+      notes: "",
+      gda_code: "",
+    };
+    setVaultJSON(vault);
+
+    // 3. Re-encrypt and save the Vault.
+    showMessage(msgEl, "ボールトを暗号化して保存中...", "info");
+    await saveVaultFromJSON(vault);
+
+    // 4. Clear the form and refresh the list.
+    event.target.reset();
+    document.getElementById("p-native-lang").value = "ja-Jpan";
+    document.getElementById("p-country").value = "JP";
+    renderPeople(vault);
+    showMessage(msgEl, "人物を追加しました。", "success");
+  } catch (err) {
+    showMessage(msgEl, "エラー: " + err.message, "error");
+  } finally {
+    setLoading("person-create-btn", false);
+  }
+}
+
+// saveVaultFromJSON encrypts the given object and performs a PUT /vault
+// with the current version. It updates sessionState.vaultVersion on success.
+async function saveVaultFromJSON(obj) {
+  const blob = await encryptVaultData(obj, sessionState.encryptionKey);
+  const blobB64 = uint8ToBase64(blob);
+  const resp = await apiPut("/vault", {
+    data: blobB64,
+    version: sessionState.vaultVersion,
+  });
+  if (resp.status === 200) {
+    sessionState.vaultVersion = resp.data.version;
+    return;
+  }
+  if (resp.status === 409) {
+    throw new Error("バージョン競合: 再読込してください");
+  }
+  throw new Error((resp.data && resp.data.error && resp.data.error.message) || "保存に失敗しました");
+}
+
+async function handleDeletePerson(personID) {
+  if (!confirm("この人物を削除しますか？")) return;
+  const msgEl = "people-msg";
+  clearMessages();
+  try {
+    const resp = await apiDelete("/persons/" + personID);
+    if (resp.status !== 204 && resp.status !== 404) {
+      showMessage(msgEl, "削除に失敗しました。", "error");
+      return;
+    }
+    const vault = getVaultJSON();
+    delete vault.persons[personID];
+    setVaultJSON(vault);
+    await saveVaultFromJSON(vault);
+    renderPeople(vault);
+    showMessage(msgEl, "削除しました。", "success");
+  } catch (err) {
+    showMessage(msgEl, "エラー: " + err.message, "error");
+  }
+}
+
+async function handleMintGDA(personID) {
+  const msgEl = "people-msg";
+  clearMessages();
+  try {
+    const resp = await apiPost("/gda-codes", { person_id: personID });
+    if (resp.status !== 201) {
+      const m = (resp.data && resp.data.error && resp.data.error.message) || "GDA コード発行に失敗しました。";
+      showMessage(msgEl, m, "error");
+      return;
+    }
+    const formatted = resp.data.code;
+    const vault = getVaultJSON();
+    if (vault.persons[personID]) {
+      vault.persons[personID].gda_code = formatted;
+      setVaultJSON(vault);
+      await saveVaultFromJSON(vault);
+      renderPeople(vault);
+    }
+    showMessage(msgEl, "発行しました: " + formatted, "success");
+  } catch (err) {
+    showMessage(msgEl, "エラー: " + err.message, "error");
+  }
+}
+
+async function handleDownloadVCard(personID) {
+  const msgEl = "people-msg";
+  clearMessages();
+  const vault = getVaultJSON();
+  const p = vault.persons[personID];
+  if (!p) {
+    showMessage(msgEl, "人物データが見つかりません。", "error");
+    return;
+  }
+
+  const payload = {
+    names: (p.names || []).map(n => ({
+      family: n.family || "",
+      given: n.given || "",
+      additional: "",
+      prefix: "",
+      suffix: "",
+      language_tag: n.language_tag || "",
+    })),
+    phones: p.phones || [],
+    emails: p.emails || [],
+    addresses: (p.addresses || []).map(a => ({
+      street_address: (a.address_lines || []).join(", "),
+      locality: a.locality || "",
+      region: a.administrative_area || "",
+      postal_code: a.postal_code || "",
+      country: a.country || "",
+      language_tag: a.script || "",
+    })),
+    note: p.notes || "",
+    gda_code: p.gda_code || "",
+    filename: (personDisplayName(p).trim().replace(/\s+/g, "_") || "person") + ".vcf",
+  };
+
+  try {
+    const resp = await apiPostRaw("/vcard", payload);
+    if (!resp.ok) {
+      showMessage(msgEl, "vCard 生成に失敗しました。", "error");
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = payload.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showMessage(msgEl, "ダウンロードしました。", "success");
+  } catch (err) {
+    showMessage(msgEl, "エラー: " + err.message, "error");
   }
 }
 

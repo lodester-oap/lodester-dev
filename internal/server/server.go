@@ -37,6 +37,9 @@ func New(addr string, logger *slog.Logger, queries *store.Queries, webFS fs.FS) 
 		sessionHandler := handler.NewSessionHandler(queries, logger)
 		meHandler := handler.NewMeHandler(queries, logger)
 		vaultHandler := handler.NewVaultHandler(queries, logger)
+		personHandler := handler.NewPersonHandler(queries, logger)
+		gdaHandler := handler.NewGDAHandler(queries, logger)
+		vcardHandler := handler.NewVCardHandler(queries, logger)
 
 		r.Route("/api/v1", func(r chi.Router) {
 			// Public routes
@@ -49,6 +52,13 @@ func New(addr string, logger *slog.Logger, queries *store.Queries, webFS fs.FS) 
 				r.Get("/me", meHandler.Get)
 				r.Get("/vault", vaultHandler.Get)
 				r.Put("/vault", vaultHandler.Put)
+				r.Post("/persons", personHandler.Create)
+				r.Get("/persons", personHandler.List)
+				r.Delete("/persons/{id}", personHandler.Delete)
+				r.Get("/persons/{id}/gda-codes", gdaHandler.ListByPerson)
+				r.Post("/gda-codes", gdaHandler.Create)
+				r.Delete("/gda-codes/{code}", gdaHandler.Delete)
+				r.Post("/vcard", vcardHandler.Export)
 			})
 		})
 	}

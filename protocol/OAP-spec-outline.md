@@ -68,6 +68,63 @@ GET https://{instance}/.well-known/oap
 
 `.onion` 等の代替ネットワークは Phase 3 以降の拡張仕様で扱う。
 
+### Section 6: Data Model — Address スキーマ (DECISION-054)
+
+**決定**: libaddressinput 8 レター + BCP 47 `script` タグで多スクリプト対応
+
+Address 1 件は以下の JSON として表現される。この定義は Phase 1 MVP 用で、Section 6 本文で精密化される:
+
+```json
+{
+  "script": "ja-Jpan",
+  "country": "JP",
+  "recipient": "山口 大翔",
+  "organization": null,
+  "address_lines": ["千代田区永田町 1-7-1"],
+  "locality": "千代田区",
+  "dependent_locality": null,
+  "administrative_area": "東京都",
+  "postal_code": "100-8914",
+  "sorting_code": null,
+  "phone": "+81-3-3581-5111",
+  "notes": null
+}
+```
+
+フィールドは libaddressinput の 8 レター規則に対応する:
+
+| レター | JSON キー | 意味 | Optional |
+|---|---|---|---|
+| N | `recipient` | 受取人 | No |
+| O | `organization` | 組織名 | Yes |
+| A | `address_lines` | 番地・建物名(配列) | No |
+| C | `locality` | 市区町村 | No |
+| D | `dependent_locality` | 町名・大字 | Yes |
+| S | `administrative_area` | 都道府県・州 | 国による |
+| Z | `postal_code` | 郵便番号 | 国による |
+| X | `sorting_code` | 仕分けコード(例: 仏 CEDEX) | Yes |
+
+**多スクリプト対応** (Priya 要件): 1 件の Person は複数 Address を持てる。同じ住所の日本語版 (`ja-Jpan`) と翻字版 (`ja-Latn`) を並置することを想定。`script` フィールドは BCP 47 タグ、`country` は ISO 3166-1 alpha-2。
+
+**バリデーション方針** (Phase 1 MVP):
+- 重点実装対象: `JP`, `US`, `DE`, `FR`, `GB`, `AU`(郵便番号書式・必須フィールド)
+- その他 234 カ国: フィールドは受け付けるが最小限のチェックのみ(未入力の拒否、長さ上限)
+- 240 カ国完璧対応は M4 のスコープ外(DECISION-054 根拠)
+
+**ゼロ知識との関係**: すべての Address JSON は Vault 暗号文内に収まり、サーバー DB には保存されない (DECISION-052)。
+
+### Section 4: Address Code Format — GDA コード (DECISION-053)
+
+**決定**: Crockford Base32 11 文字 + Luhn mod 32 チェックサム 1 文字 = 合計 12 文字。表示は `XXXX-XXXX-XXXX` の 4-4-4 形式。
+
+- 符号化アルファベット: `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (I/L/O/U なし)
+- ランダム源: `crypto/rand` 55 bit
+- 誤読耐性: Luhn mod 32 が単一文字誤入力を 100% 検出
+- リファレンス実装: `internal/gda/generator.go` (Lodester)
+- 詳細な ABNF 構文は Section 4 本文で定義
+
+GDA コードは「公開識別子」として扱う。個人情報を含まないため Vault 外の `gda_codes` テーブルにインデックス可能。
+
 ### Section 8: 認証方式
 
 **決定**: Bitwarden 方式(KDF 派生ログインハッシュ)
