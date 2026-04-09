@@ -40,11 +40,15 @@ func New(addr string, logger *slog.Logger, queries *store.Queries, webFS fs.FS) 
 		personHandler := handler.NewPersonHandler(queries, logger)
 		gdaHandler := handler.NewGDAHandler(queries, logger)
 		vcardHandler := handler.NewVCardHandler(queries, logger)
+		shareHandler := handler.NewShareHandler(queries, logger)
 
 		r.Route("/api/v1", func(r chi.Router) {
 			// Public routes
 			r.Post("/accounts", accountHandler.Create)
 			r.Post("/sessions", sessionHandler.Create)
+			// Public share lookup — recipients have the fragment key
+			// but no account. DECISION-055.
+			r.Get("/share/{id}", shareHandler.Get)
 
 			// Authenticated routes
 			r.Group(func(r chi.Router) {
@@ -59,6 +63,9 @@ func New(addr string, logger *slog.Logger, queries *store.Queries, webFS fs.FS) 
 				r.Post("/gda-codes", gdaHandler.Create)
 				r.Delete("/gda-codes/{code}", gdaHandler.Delete)
 				r.Post("/vcard", vcardHandler.Export)
+				r.Post("/share", shareHandler.Create)
+				r.Get("/share", shareHandler.List)
+				r.Delete("/share/{id}", shareHandler.Delete)
 			})
 		})
 	}
@@ -69,6 +76,14 @@ func New(addr string, logger *slog.Logger, queries *store.Queries, webFS fs.FS) 
 		r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFileFS(w, r, webFS, "index.html")
+		})
+		// Capability-URL recipient page (DECISION-055). Served with
+		// no-store + no-referrer so the fragment key in the address
+		// bar is not cached or leaked downstream.
+		r.Get("/share.html", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			http.ServeFileFS(w, r, webFS, "share.html")
 		})
 	}
 

@@ -1,0 +1,280 @@
+<!--
+  SPDX-License-Identifier: AGPL-3.0-or-later
+
+  web/share.html — recipient view for capability URLs.
+
+  Flow (DECISION-055):
+    1. Owner creates a share link in their Lodester client. The client
+       encrypts the payload with a fresh AES-GCM-256 key and POSTs the
+       ciphertext to /api/v1/share. The key NEVER leaves the browser.
+    2. The client constructs a URL of the form:
+         https://<host>/share.html?id=<opaque-id>#k=<base64url-key>
+       The fragment (#k=...) is the encryption key. Browsers do not
+       transmit fragments, so the server only ever sees the id.
+    3. The recipient opens the URL. This page:
+         - reads the id from the query string
+         - reads the key from the fragment
+         - fetches /api/v1/share/{id} → { ciphertext, expires_at }
+         - decrypts in-browser with AES-GCM
+         - renders the plaintext payload
+
+  Security warnings rendered to the user before decryption — this link
+  leaks via browser history, bookmarks, screenshots, and any system that
+  logs full URLs including fragments (some mobile OSes do).
+-->
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Lodester — 共有リンク</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 640px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #222;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.4rem; }
+    .card {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+    }
+    .warning {
+      background: #fff7e6;
+      border-color: #e7a93b;
+    }
+    .warning h2 { margin-top: 0; font-size: 1.05rem; color: #8a5a00; }
+    .error {
+      background: #fdecea;
+      border-color: #d93025;
+      color: #a31309;
+    }
+    button {
+      background: #1a73e8;
+      color: #fff;
+      border: 0;
+      padding: 0.6rem 1.1rem;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button[disabled] { background: #aaa; cursor: not-allowed; }
+    pre {
+      background: #f4f4f4;
+      padding: 0.75rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    dl { margin: 0; }
+    dt { font-weight: 600; margin-top: 0.5rem; color: #555; }
+    dd { margin: 0.15rem 0 0 0; }
+    .muted { color: #666; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Lodester 共有リンク</h1>
+
+  <div id="warning" class="card warning">
+    <h2>⚠ 受信前にお読みください</h2>
+    <p>
+      このリンクは、送信者の端末上で暗号化された個人情報を
+      あなた宛に渡すためのものです。Lodester サーバーは
+      暗号文しか見ておらず、復号はあなたのブラウザ内でのみ
+      行われます。
+    </p>
+    <ul>
+      <li>URL 末尾 (<code>#k=</code>) には復号鍵が含まれています。
+          ブラウザ履歴・ブックマーク・スクリーンショットから漏れる
+          可能性があります。</li>
+      <li>信頼できる相手から受け取ったリンクのみ開いてください。</li>
+      <li>内容を保存するときは、URL ではなく復号後のデータを
+          安全な場所にコピーしてください。</li>
+    </ul>
+    <button id="reveal-btn" type="button">復号して表示する</button>
+  </div>
+
+  <div id="result" hidden></div>
+  <div id="error" class="card error" hidden></div>
+
+  <p class="muted">
+    Lodester はゼロ知識設計のアドレス帳です。共有設計の根拠は
+    DECISION-055 / DECISION-056 を参照してください。
+  </p>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------
+// URL parsing
+// ---------------------------------------------------------------------
+// id comes from the query string, key from the fragment. The fragment
+// is NEVER sent to the server on fetch() — browsers strip it.
+function parseCapabilityURL() {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("id");
+
+  // Fragment format: #k=<base64url>
+  const frag = window.location.hash.replace(/^#/, "");
+  const fragParams = new URLSearchParams(frag);
+  const keyB64 = fragParams.get("k");
+
+  return { id, keyB64 };
+}
+
+// ---------------------------------------------------------------------
+// base64url helpers (kept local so this page has zero JS dependencies)
+// ---------------------------------------------------------------------
+function base64urlToUint8(str) {
+  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  const binary = atob(str);
+  const arr = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+  return arr;
+}
+
+// ---------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------
+function showError(msg) {
+  const el = document.getElementById("error");
+  el.textContent = msg;
+  el.hidden = false;
+}
+
+function escapeHTML(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderPayload(payload, expiresAt) {
+  const container = document.getElementById("result");
+  container.hidden = false;
+
+  // Hide the warning card now that decryption succeeded.
+  document.getElementById("warning").hidden = true;
+
+  // Shape is defined client-side by the sender. For MVP we expect:
+  // { person: { name, handle, note }, addresses: [ {label, street, ...} ] }
+  // but fall back to a JSON dump for unknown shapes.
+  if (payload && typeof payload === "object" && payload.person) {
+    const p = payload.person;
+    const addrs = Array.isArray(payload.addresses) ? payload.addresses : [];
+    let html = '<div class="card"><dl>';
+    if (p.name)   html += `<dt>氏名</dt><dd>${escapeHTML(p.name)}</dd>`;
+    if (p.handle) html += `<dt>ハンドル</dt><dd>${escapeHTML(p.handle)}</dd>`;
+    if (p.note)   html += `<dt>メモ</dt><dd>${escapeHTML(p.note)}</dd>`;
+    html += "</dl></div>";
+
+    for (const a of addrs) {
+      html += '<div class="card"><dl>';
+      if (a.label)   html += `<dt>ラベル</dt><dd>${escapeHTML(a.label)}</dd>`;
+      if (a.country) html += `<dt>国</dt><dd>${escapeHTML(a.country)}</dd>`;
+      if (a.postal)  html += `<dt>郵便番号</dt><dd>${escapeHTML(a.postal)}</dd>`;
+      if (a.region)  html += `<dt>都道府県</dt><dd>${escapeHTML(a.region)}</dd>`;
+      if (a.city)    html += `<dt>市区町村</dt><dd>${escapeHTML(a.city)}</dd>`;
+      if (a.street)  html += `<dt>番地</dt><dd>${escapeHTML(a.street)}</dd>`;
+      if (a.phone)   html += `<dt>電話</dt><dd>${escapeHTML(a.phone)}</dd>`;
+      html += "</dl></div>";
+    }
+    html += `<p class="muted">有効期限: ${escapeHTML(expiresAt)}</p>`;
+    container.innerHTML = html;
+  } else {
+    // Unknown shape — show the raw JSON. Safer than failing to render.
+    container.innerHTML =
+      '<div class="card"><pre>' +
+      escapeHTML(JSON.stringify(payload, null, 2)) +
+      "</pre></div>" +
+      `<p class="muted">有効期限: ${escapeHTML(expiresAt)}</p>`;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Decryption flow
+// ---------------------------------------------------------------------
+async function revealShare() {
+  const btn = document.getElementById("reveal-btn");
+  btn.disabled = true;
+  btn.textContent = "復号中...";
+
+  try {
+    const { id, keyB64 } = parseCapabilityURL();
+    if (!id) throw new Error("リンクが不正です (id がありません)");
+    if (!keyB64) throw new Error("リンクが不正です (鍵がありません)");
+
+    // Fetch ciphertext from the server. The server never sees the key.
+    const resp = await fetch(`/api/v1/share/${encodeURIComponent(id)}`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      // Explicitly decline cookies / credentials for the public endpoint.
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+    });
+
+    if (resp.status === 404) throw new Error("リンクが見つかりません");
+    if (resp.status === 410) throw new Error("このリンクは有効期限切れです");
+    if (!resp.ok) throw new Error(`サーバーエラー: ${resp.status}`);
+
+    const body = await resp.json();
+    // body.ciphertext is base64 (JSON default for []byte in Go)
+    const ciphertextBytes = Uint8Array.from(atob(body.ciphertext), c => c.charCodeAt(0));
+
+    // The sender's format: [12-byte nonce][AES-GCM ciphertext+tag]
+    if (ciphertextBytes.length < 13) throw new Error("暗号文が短すぎます");
+    const nonce = ciphertextBytes.slice(0, 12);
+    const ct = ciphertextBytes.slice(12);
+
+    const rawKey = base64urlToUint8(keyB64);
+    if (rawKey.length !== 32) throw new Error("鍵長が不正です (32 バイトを期待)");
+
+    const key = await crypto.subtle.importKey(
+      "raw", rawKey,
+      { name: "AES-GCM" },
+      false,
+      ["decrypt"]
+    );
+
+    let plainBuf;
+    try {
+      plainBuf = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: nonce },
+        key,
+        ct
+      );
+    } catch (e) {
+      throw new Error("復号に失敗しました (鍵が違うか、データが壊れています)");
+    }
+
+    const plaintext = new TextDecoder().decode(plainBuf);
+    let payload;
+    try {
+      payload = JSON.parse(plaintext);
+    } catch (e) {
+      // Still show the raw text — unusual but not fatal.
+      payload = { raw: plaintext };
+    }
+
+    renderPayload(payload, body.expires_at);
+  } catch (err) {
+    showError(err.message || String(err));
+    btn.disabled = false;
+    btn.textContent = "再試行";
+  }
+}
+
+document.getElementById("reveal-btn").addEventListener("click", revealShare);
+</script>
+</body>
+</html>

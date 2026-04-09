@@ -7,7 +7,7 @@ import (
 	"io/fs"
 )
 
-//go:embed index.html lodester-client.js
+//go:embed index.html lodester-client.js share.html
 var content embed.FS
 
 // FS returns the embedded web assets as a filesystem.

@@ -143,6 +143,27 @@ func TestCreateSession_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestCreateSession_NonHexLoginHash exercises the hex.DecodeString error
+// branch. The request body is well-formed JSON with a login_hash that is
+// 64 characters long but contains non-hex runes, so the decoder fails.
+// The response must still be 401 (not 400) to avoid leaking whether the
+// input format was the problem.
+func TestCreateSession_NonHexLoginHash(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	h := handler.NewSessionHandler(queries, slog.Default())
+
+	body := `{"email":"nonhex@example.com","login_hash":"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for non-hex login_hash, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateSession_MissingFields(t *testing.T) {
 	queries := testutil.SetupTestQueries(t)
 	h := handler.NewSessionHandler(queries, slog.Default())

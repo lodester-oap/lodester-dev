@@ -213,6 +213,78 @@ func TestVaultPut_MissingData(t *testing.T) {
 	}
 }
 
+// TestVaultPut_PayloadTooLarge exercises the size-limit branch in vault.Put.
+func TestVaultPut_PayloadTooLarge(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "vault-huge@example.com")
+	router := authedRouter(queries)
+
+	// 2 MB of zero bytes — exceeds the 1 MB limit enforced by the handler.
+	huge := make([]byte, 2<<20)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/vault", bytes.NewReader(huge))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestVaultPut_InvalidJSON exercises the json.Unmarshal error branch in
+// vault.Put — the body is small (passes the size gate) but is not valid
+// JSON.
+func TestVaultPut_InvalidJSON(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "vault-badjson@example.com")
+	router := authedRouter(queries)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/vault", bytes.NewBufferString("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestVaultPut_InvalidHeader exercises the crypto.ValidateHeader error
+// branch. The blob parses cleanly (ParseVaultBlob returns OK) but the
+// header JSON is missing required fields, so ValidateHeader rejects it.
+func TestVaultPut_InvalidHeader(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "vault-badheader@example.com")
+	router := authedRouter(queries)
+
+	// Version 0 trips ValidateHeader's "unsupported schema version" check
+	// while ParseVaultBlob itself remains satisfied.
+	header := `{"v":0,"alg":"aes-gcm-256","kdf":"argon2id","kdf_params":{"memory":65536},"nonce":"dGVzdG5vbmNl","ct_len":16}`
+	headerBytes := []byte(header)
+	headerLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(headerLen, uint32(len(headerBytes)))
+	blob := append(headerLen, headerBytes...)
+	blob = append(blob, make([]byte, 16)...)
+
+	blobB64 := base64.StdEncoding.EncodeToString(blob)
+	body, _ := json.Marshal(map[string]interface{}{
+		"data":    blobB64,
+		"version": 0,
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/vault", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestVaultGet_AfterPut(t *testing.T) {
 	queries := testutil.SetupTestQueries(t)
 	token := loginAndGetToken(t, queries, "vault-getput@example.com")

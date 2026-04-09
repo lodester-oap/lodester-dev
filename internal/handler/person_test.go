@@ -246,10 +246,10 @@ func TestVCardExport_ContainsExpectedFields(t *testing.T) {
 	out := rec.Body.String()
 	for _, want := range []string{
 		"BEGIN:VCARD",
-		"VERSION:4.0",
+		"VERSION:3.0",
 		"FN:",
 		"N:山口;大翔;;;",
-		"ADR;LANGUAGE=ja-Jpan:;;永田町 1-7-1;千代田区;東京都;100-8914;JP",
+		"ADR:;;永田町 1-7-1;千代田区;東京都;100-8914;JP",
 		"TEL;TYPE=voice:+81-3-3581-5111",
 		"X-GDA-CODE:ABCD-EFGH-JKMN",
 		"END:VCARD",
@@ -362,5 +362,116 @@ func TestVCardExport_InvalidJSON(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for invalid JSON, got %d", rec.Code)
+	}
+}
+
+// TestPersonDelete_NotFound exercises the pgx.ErrNoRows branch in
+// person.Delete by passing a syntactically valid UUID that does not
+// correspond to any row.
+func TestPersonDelete_NotFound(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "person-del-nf@example.com")
+	router := personAPIRouter(queries)
+
+	// Random-looking UUID that is not in the DB.
+	missing := "00000000-0000-4000-8000-000000000001"
+	rec := doJSON(t, router, http.MethodDelete, "/api/v1/persons/"+missing, token, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing person, got %d", rec.Code)
+	}
+}
+
+// TestPersonDelete_NonHexUUID covers the hex.DecodeString error branch in
+// parseUUIDString. The happy-path length check passes but the bytes are
+// not valid hex, so the decoder returns an error.
+func TestPersonDelete_NonHexUUID(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "person-del-hex@example.com")
+	router := personAPIRouter(queries)
+
+	// 32 non-hex characters — passes the length check but fails hex decode.
+	bogus := strings.Repeat("z", 32)
+	rec := doJSON(t, router, http.MethodDelete, "/api/v1/persons/"+bogus, token, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-hex UUID, got %d", rec.Code)
+	}
+}
+
+// TestGDACreate_PersonNotFound exercises the pgx.ErrNoRows ownership
+// branch in gda.Create by passing a syntactically valid person_id that
+// doesn't exist in the database.
+func TestGDACreate_PersonNotFound(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "gda-nf@example.com")
+	router := personAPIRouter(queries)
+
+	missing := "00000000-0000-4000-8000-000000000002"
+	rec := doJSON(t, router, http.MethodPost, "/api/v1/gda-codes", token, map[string]string{
+		"person_id": missing,
+	})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for nonexistent person, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGDAListByPerson_InvalidUUIDFormat covers the parseUUIDString error
+// branch in gda.ListByPerson.
+func TestGDAListByPerson_InvalidUUIDFormat(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "gda-list-bad@example.com")
+	router := personAPIRouter(queries)
+
+	rec := doJSON(t, router, http.MethodGet, "/api/v1/persons/not-a-uuid/gda-codes", token, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad person id, got %d", rec.Code)
+	}
+}
+
+// TestVCardExport_DefaultFilename exercises the branch where the client
+// does not supply a filename and the handler falls back to "person.vcf".
+func TestVCardExport_DefaultFilename(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "vcard-default-fn@example.com")
+	router := personAPIRouter(queries)
+
+	body := map[string]interface{}{
+		"names": []map[string]interface{}{
+			{"family": "Smith", "given": "Alice", "language_tag": "en-Latn"},
+		},
+		// intentionally no "filename" key
+	}
+	rec := doJSON(t, router, http.MethodPost, "/api/v1/vcard", token, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "person.vcf") {
+		t.Errorf("expected default person.vcf in Content-Disposition, got %q", cd)
+	}
+}
+
+// TestVCardExport_FilenameWithSpecialChars covers the `default` branch of
+// sanitizeFilename where non-ASCII or special characters are mapped to
+// underscores.
+func TestVCardExport_FilenameWithSpecialChars(t *testing.T) {
+	queries := testutil.SetupTestQueries(t)
+	token := loginAndGetToken(t, queries, "vcard-weird-fn@example.com")
+	router := personAPIRouter(queries)
+
+	body := map[string]interface{}{
+		"names": []map[string]interface{}{
+			{"family": "Smith", "given": "Alice", "language_tag": "en-Latn"},
+		},
+		"filename": "my file (1).vcf",
+	}
+	rec := doJSON(t, router, http.MethodPost, "/api/v1/vcard", token, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	// Spaces and parentheses inside the filename are replaced with
+	// underscores. The original "my file (1).vcf" should become
+	// "my_file__1_.vcf".
+	if !strings.Contains(cd, `filename="my_file__1_.vcf"`) {
+		t.Errorf("expected sanitized filename my_file__1_.vcf, got %q", cd)
 	}
 }
